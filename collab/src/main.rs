@@ -1,5 +1,6 @@
 #![allow(dead_code)]
-use std::{collections::HashMap, io::Error, io::ErrorKind, str::FromStr};
+use std::{io::Error, io::ErrorKind, str::FromStr};
+use warp::Filter;
 
 #[derive(Debug)]
 struct QuestionId(String);
@@ -35,9 +36,7 @@ impl Question {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let resp = reqwest::get("https://httpbin.org/ip").await?;
-    let ip = resp.json::<HashMap<String, String>>().await?;
-    println!("{:#?}", ip);
-    Ok(())
+async fn main() {
+    let hello = warp::get().map(|| format!("Hello, World!"));
+    warp::serve(hello).run(([127, 0, 0, 1], 1337)).await;
 }
