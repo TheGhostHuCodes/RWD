@@ -1,4 +1,5 @@
-use std::{io::Error, io::ErrorKind, str::FromStr};
+#![allow(dead_code)]
+use std::{collections::HashMap, io::Error, io::ErrorKind, str::FromStr};
 
 #[derive(Debug)]
 struct QuestionId(String);
@@ -33,12 +34,10 @@ impl Question {
     }
 }
 
-fn main() {
-    let question = Question::new(
-        QuestionId::from_str("1").expect("No id provided"),
-        "First Question".to_string(),
-        "Content of question".to_string(),
-        Some(vec!["faq".to_string()]),
-    );
-    println!("{:#?}", question);
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let resp = reqwest::get("https://httpbin.org/ip").await?;
+    let ip = resp.json::<HashMap<String, String>>().await?;
+    println!("{:#?}", ip);
+    Ok(())
 }
