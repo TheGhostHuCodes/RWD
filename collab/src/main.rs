@@ -1,10 +1,66 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{cmp::min, collections::HashMap, ops::Range};
 use warp::{
     cors::CorsForbidden,
     hyper::{Method, StatusCode},
+    reject::Reject,
     Filter, Rejection, Reply,
 };
+
+#[allow(clippy::enum_variant_names)]
+#[derive(Debug)]
+enum Error {
+    ParseError(std::num::ParseIntError),
+    MissingParameters,
+    StartGreaterThanEnd(Pagination),
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::ParseError(err) => {
+                write!(f, "Cannot parse parameter: {}", err)
+            }
+            Error::MissingParameters => write!(f, "Missing parameter"),
+            Error::StartGreaterThanEnd(pagination) => {
+                write!(f, "Start greater end {:?}", pagination)
+            }
+        }
+    }
+}
+
+impl Reject for Error {}
+
+#[derive(Debug)]
+struct Pagination {
+    start: usize,
+    end: usize,
+}
+
+fn extract_pagination(params: HashMap<String, String>) -> Result<Pagination, Error> {
+    match (params.get("start"), params.get("end")) {
+        // Both start and end are present.
+        (Some(start), Some(end)) => {
+            let p = Pagination {
+                start: start.parse::<usize>().map_err(Error::ParseError)?,
+                end: end.parse::<usize>().map_err(Error::ParseError)?,
+            };
+            if p.start > p.end {
+                Err(Error::StartGreaterThanEnd(p))
+            } else {
+                Ok(p)
+            }
+        }
+        // Neither start nor end are present. Default behavior is to return the
+        // full range.
+        (None, None) => Ok(Pagination {
+            start: 0,
+            end: usize::MAX,
+        }),
+        // Either start or end is missing.
+        _ => Err(Error::MissingParameters),
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
 struct QuestionId(String);
@@ -35,14 +91,28 @@ impl Store {
     }
 }
 
-async fn get_questions(store: Store) -> Result<impl warp::Reply, warp::Rejection> {
-    let res: Vec<Question> = store.questions.values().cloned().collect();
+async fn get_questions(
+    params: HashMap<String, String>,
+    store: Store,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    fn valid_range(p: Pagination, length: usize) -> Range<usize> {
+        min(p.start, length)..min(p.end, length)
+    }
+
+    let res = store.questions.values().cloned().collect::<Vec<_>>();
+    let pagination = extract_pagination(params)?;
+    let res = &res[valid_range(pagination, res.len())];
 
     Ok(warp::reply::json(&res))
 }
 
 async fn return_error(r: Rejection) -> Result<impl Reply, Rejection> {
-    if let Some(error) = r.find::<CorsForbidden>() {
+    if let Some(error) = r.find::<Error>() {
+        Ok(warp::reply::with_status(
+            error.to_string(),
+            StatusCode::RANGE_NOT_SATISFIABLE,
+        ))
+    } else if let Some(error) = r.find::<CorsForbidden>() {
         Ok(warp::reply::with_status(
             error.to_string(),
             StatusCode::FORBIDDEN,
@@ -68,6 +138,7 @@ async fn main() {
     let get_items = warp::get()
         .and(warp::path("questions"))
         .and(warp::path::end())
+        .and(warp::query())
         .and(store_filter)
         .and_then(get_questions)
         .recover(return_error);
